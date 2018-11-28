@@ -27,11 +27,4 @@
 Notes:
 - project structure
 - tools like Make or CMake
-- how to handle this eigen file
-    - don't want to put it in usr/local/include since that is global
-    - seems odd to have all of this raw code just sitting there
-    - maybe it is a good idea to just compile it and include it as a library or something?
-- is there a C++ requirements file?
-- is there a way of making a virtual environment for compiling C++ programs, so that
-the compiler knows where to look? (is this just achieved with environment variables?)
-
+    - this was in the labs so may be worth including!
