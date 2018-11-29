@@ -14,8 +14,8 @@ using Eigen::MatrixXd;
 using Eigen::VectorXd;
 
 
-VectorXd ols_weights(MatrixXd X, VectorXd y);
-
+VectorXd ridge_weights(MatrixXd X, VectorXd y, double lambda);
+VectorXd predict(VectorXd weights, MatrixXd xvals);
 
 int main() {
 
@@ -27,8 +27,10 @@ int main() {
     VectorXd v = VectorXd::Constant(n_examples, 1);
     VectorXd u = VectorXd::LinSpaced(n_examples, 0, 4);
 
-    MatrixXd X(v.rows(), v.cols() + u.cols());
+
+    MatrixXd X(v.rows(), v.cols() + 2 * u.cols());
     X << v,
+         -u,
          u;
 
     VectorXd eps = err_size * VectorXd::Random(n_examples);
@@ -37,15 +39,13 @@ int main() {
     std::cout << "X = " << X << std::endl;
     std::cout << "Y = " << y << std::endl;
 
-    VectorXd b = ols_weights(X, y);
+    double l = 1.0;
+    VectorXd b = ridge_weights(X, y, l);
     std::cout << "beta = " << b << std::endl;
 
-    std::cout << b .dot(b) <<std::endl;
-
-    VectorXd predictions = predict(ols_weights, u);
+    VectorXd predictions = predict(b, u);
 
     std::cout << "predictions = " << predictions << std::endl;
-
     return 0;
 }
 
@@ -53,9 +53,16 @@ int main() {
 // These are column stacked training examples
 
 // would be good if we could enforce the size of these two things to be the same
+VectorXd ridge_weights(MatrixXd X, VectorXd y, double lambda){
+    // NEED TO CHANGE THIS TO USE QR (or something) WHEN LAMBDA \NEQ 0
+
+    Eigen::MatrixXd eye = Eigen::MatrixXd::Identity(X.cols(), X.cols());
+    return (lambda * eye + X.transpose() * X).llt().solve(X.transpose() * y);
+}
+
+
 VectorXd ols_weights(MatrixXd X, VectorXd y){
-    // y_hat = (XX^T)^-1 Xy etc etc use cholesky! LLT
-    return (X.transpose() * X).llt().solve(X.transpose() * y);
+
 }
 
 /*
@@ -66,14 +73,25 @@ VectorXd ols_weights(MatrixXd X, VectorXd y){
  * Now in the process of making the predictions. Might be worth doing that and getting a couple
  * of other statistics on the fit (i.e. RMSE or something) and then put it into a class. Maybe
  * that would be enough?
+ *
+ * When you do the class maybe you can figure out the number of dims in advance and save some
+ * compile time?
+ *
+ *
+ * Notes:
+ * - figure out this thing about column major ordering in Eigen
+ * (is it normal and is it just indexing?)
+ * - get the QR decomp for when lambda is non-zero. maybe want householder QR,
+ *   maybe also need to make sure the rank is checked?
  */
 
 
+VectorXd predict(VectorXd weights, MatrixXd xvals) {
+    double offset = weights(0);
+    VectorXd slope = weights.tail(weights.rows() - 1);
+    VectorXd output = ((xvals * slope).array() + offset).matrix();
 
-VectorXd predict(VectorXd weights, VectorXd x_vals) {
-    double offset = weights(0); // Need to change this to take the row rather than the element...
-    VectorXd slope = weights.tail(weights.size() - 1);
+    std::cout << xvals << slope << output << std::endl;
 
-    VectorXd output = (slope.dot(x_vals) + offset).matrix();
     return output;
 }
