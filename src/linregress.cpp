@@ -9,61 +9,78 @@
 
 #include <Eigen/Dense>
 
-
 using Eigen::MatrixXd;
 using Eigen::VectorXd;
 
 
-VectorXd ridge_weights(MatrixXd X, VectorXd y, double lambda);
-VectorXd predict(VectorXd weights, MatrixXd xvals);
-
-int main() {
-
-    int n_examples = 5;
-    int n_features = 1;
-    double s = 2;
-    double err_size = 0.1;
-
-    VectorXd v = VectorXd::Constant(n_examples, 1);
-    VectorXd u = VectorXd::LinSpaced(n_examples, 0, 4);
-
-
-    MatrixXd X(v.rows(), v.cols() + 2 * u.cols());
-    X << v,
-         -u,
-         u;
-
-    VectorXd eps = err_size * VectorXd::Random(n_examples);
-    VectorXd y = u + eps;
-
-    std::cout << "X = " << X << std::endl;
-    std::cout << "Y = " << y << std::endl;
-
-    double l = 1.0;
-    VectorXd b = ridge_weights(X, y, l);
-    std::cout << "beta = " << b << std::endl;
-
-    VectorXd predictions = predict(b, u);
-
-    std::cout << "predictions = " << predictions << std::endl;
-    return 0;
+MatrixXd append_ones_column(MatrixXd X) {
+    MatrixXd new_x(X.rows(), X.cols() + 1);
+    VectorXd c = VectorXd::Constant(X.rows(), 1.);
+    new_x << X, c;
+    return new_x;
 }
 
-// need to add a constant to X (!!!)
-// These are column stacked training examples
+class RidgeRegression {
+private:
+    double lambda;
+    bool has_constant;
+    bool is_fitted;
+    /*
+     * Some of these aren't in the constructor, so it might be worth thinking about their
+     * initialisation.
+     */
+//    MatrixXd x_train;
+//    VectorXd y_train;
 
-// would be good if we could enforce the size of these two things to be the same
-VectorXd ridge_weights(MatrixXd X, VectorXd y, double lambda){
-    // NEED TO CHANGE THIS TO USE QR (or something) WHEN LAMBDA \NEQ 0
 
-    Eigen::MatrixXd eye = Eigen::MatrixXd::Identity(X.cols(), X.cols());
-    return (lambda * eye + X.transpose() * X).llt().solve(X.transpose() * y);
+    Eigen::LLT <MatrixXd> cholesky_decomp; // Will only need this for errors etc. (i think)
+    VectorXd weights;
+
+public:
+    RidgeRegression(double lambda) : lambda(lambda), is_fitted(false) {}
+
+    void fit(MatrixXd X, VectorXd y, bool add_constant);
+
+    VectorXd predict(MatrixXd x_vals);
+
+    inline VectorXd get_weights() { return this->weights; }
+};
+
+
+void RidgeRegression::fit(MatrixXd X, VectorXd y, bool add_constant) {
+    if (X.rows() != y.rows()) {
+        throw std::invalid_argument("X and y must have same number of rows.");
+    }
+
+    MatrixXd X_train = (add_constant) ? append_ones_column(X) : X;
+
+    Eigen::MatrixXd eye = Eigen::MatrixXd::Identity(X_train.cols(), X_train.cols());
+
+    this->cholesky_decomp = (this->lambda * eye + X_train.transpose() * X_train).llt();
+    this->weights = cholesky_decomp.solve(X_train.transpose() * y);
+    this->has_constant = add_constant;
+    this->is_fitted = true;
+    return;
 }
 
+VectorXd RidgeRegression::predict(MatrixXd xvals) {
+    if (!this->is_fitted) {
+        throw std::domain_error("Need to fit regression before prediction.");
+    }
 
-VectorXd ols_weights(MatrixXd X, VectorXd y){
+    if (has_constant) {
+        double offset = this->weights(this->weights.rows() - 1);
+        VectorXd slope = this->weights.head(this->weights.rows() - 1);
 
+        std::cout << "offset is " << offset << std::endl;
+        std::cout << "slope is \n" << slope << std::endl;
+
+        return ((xvals * slope).array() + offset).matrix();
+    } else {
+        return xvals * this->weights;
+    }
 }
+
 
 /*
  * There is some confusion on how the multi output dim stuff works and whether X should
@@ -83,15 +100,49 @@ VectorXd ols_weights(MatrixXd X, VectorXd y){
  * (is it normal and is it just indexing?)
  * - get the QR decomp for when lambda is non-zero. maybe want householder QR,
  *   maybe also need to make sure the rank is checked?
+ *
+ *   need to implement the ols stuff as well
+ *   Possibly worth just couching this as bayes lin regress
+ *   potentially some ordering issues with eigen? also need to make sure we stack
+ *   examples correctly
+ *
+ *   decide which stats to show, how to write output etc.
+ *   can pick a few from the python version
  */
 
 
-VectorXd predict(VectorXd weights, MatrixXd xvals) {
-    double offset = weights(0);
-    VectorXd slope = weights.tail(weights.rows() - 1);
-    VectorXd output = ((xvals * slope).array() + offset).matrix();
 
-    std::cout << xvals << slope << output << std::endl;
+int main() {
 
-    return output;
+    int n_examples = 5;
+    double err_size = 0.1;
+
+    VectorXd u = VectorXd::LinSpaced(n_examples, 0, 4);
+    VectorXd u2 = VectorXd::LinSpaced(n_examples, 4, 0);
+
+    MatrixXd X(n_examples, 2 * u.cols());
+    X << u, u2;
+
+    std::srand(0);
+    VectorXd eps = err_size * VectorXd::Random(n_examples);
+    VectorXd y = u + eps;
+
+    std::cout << "X = \n" << X << std::endl;
+    std::cout << "Y = \n" << y << std::endl;
+
+    RidgeRegression regressor(1.0);
+    regressor.fit(X, y, true);
+
+    VectorXd b = regressor.get_weights();
+
+    std::cout << "beta = \n" << b << std::endl;
+
+    MatrixXd xvals = u.replicate(1, 2);
+
+    std::cout << xvals << std::endl;
+
+    VectorXd predictions = regressor.predict(xvals);
+    std::cout << "predictions = \n" << predictions << std::endl;
+
+    return 0;
 }
