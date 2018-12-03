@@ -3,14 +3,13 @@
 // Linear regression with a single output dimension
 
 #include <getopt.h>
+#include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <numeric>
 #include <vector>
 
 #include <Eigen/Dense>
-
-#include <typeinfo>
 
 using Eigen::MatrixXd;
 using Eigen::VectorXd;
@@ -32,7 +31,7 @@ private:
     bool has_constant;
     bool is_fitted;
 
-    Eigen::LLT <MatrixXd> cholesky_decomp;
+    Eigen::HouseholderQR <MatrixXd> qr_decomp;
     VectorXd weights;
 
 public:
@@ -56,9 +55,10 @@ void RidgeRegression::fit(MatrixXd X, VectorXd y, bool add_constant) {
     Eigen::MatrixXd eye = Eigen::MatrixXd::Identity(X_train.cols(), X_train.cols());
 
 
-    this->cholesky_decomp = (this->lambda * eye + X_train.transpose() * X_train).llt();
+    this->qr_decomp = (this->lambda * eye + X_train.transpose() * X_train).householderQr();
 
-    MatrixXd w = this->cholesky_decomp.solve(X_train.transpose() * y);
+
+    MatrixXd w = this->qr_decomp.solve(X_train.transpose() * y);
     this->weights = Eigen::Map<VectorXd>(w.data(), w.size());
 
     this->has_constant = add_constant;
@@ -161,6 +161,32 @@ command_line_args parse_args(int argc, char *argv[]) {
 }
 
 
+struct input_data {
+    MatrixXd X;
+    VectorXd y;
+};
+
+
+input_data read_input_file(std::string input_filename){
+    input_data inputs;
+
+    std::ifstream infile(input_filename);
+
+    if (!infile.is_open()) {
+        std::cerr << "Failed to open " << input_filename << std::endl;
+        exit(EXIT_FAILURE);
+    }
+
+    while (std::getline(infile, line)) {
+        std::cout << line << std::endl;
+    }
+
+    // read file
+
+    return inputs;
+}
+
+
 int main(int argc, char *argv[]) {
 
     command_line_args args = parse_args(argc, argv);
@@ -179,8 +205,8 @@ int main(int argc, char *argv[]) {
     VectorXd eps = err_size * VectorXd::Random(n_examples);
     VectorXd y = 2 * u + 3 * u2 + eps;
 
-//    std::cout << "X = \n" << X << std::endl;
-//    std::cout << "Y = \n" << y << std::endl;
+    std::cout << "X = \n" << X << std::endl;
+    std::cout << "Y = \n" << y << std::endl;
 
     RidgeRegression regressor(args.lambda);
     regressor.fit(X, y, true);
@@ -205,6 +231,8 @@ int main(int argc, char *argv[]) {
 /*
  * APPARENTLY THE USE OF QR IS MORE COMMON FOR LEAST SQUARES PROBLEMS !!!!!!!!! BALLS
 
+ *  Maybe it is easier to assume full rank of the X matrix?
+ *
  *
  * TODO:
  * - reading input fule
