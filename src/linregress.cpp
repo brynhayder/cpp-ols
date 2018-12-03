@@ -55,7 +55,9 @@ int main() {
 // would be good if we could enforce the size of these two things to be the same
 VectorXd ridge_weights(MatrixXd X, VectorXd y, double lambda){
     // NEED TO CHANGE THIS TO USE QR (or something) WHEN LAMBDA \NEQ 0
-
+    if (lambda <= 0){
+        throw domain_error("Ridge parameter lambda must be > 0.");
+    }
     Eigen::MatrixXd eye = Eigen::MatrixXd::Identity(X.cols(), X.cols());
     return (lambda * eye + X.transpose() * X).llt().solve(X.transpose() * y);
 }
@@ -83,6 +85,10 @@ VectorXd ols_weights(MatrixXd X, VectorXd y){
  * (is it normal and is it just indexing?)
  * - get the QR decomp for when lambda is non-zero. maybe want householder QR,
  *   maybe also need to make sure the rank is checked?
+ *
+ * Goal here is to get something that can do linear regression on data from a text file
+ * and can be used from the command line
+ *
  */
 
 
