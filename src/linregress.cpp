@@ -6,14 +6,17 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
-#include <numeric>
 #include <Eigen/Dense>
 
 using Eigen::MatrixXd;
 using Eigen::VectorXd;
 
-double DEFAULT_LAMBDA_VALUE = 0;
-char DELIM = ',';
+const double DEFAULT_LAMBDA_VALUE = 0;
+const std::streamsize DEFAULT_PREC = 2;
+const char DELIM = ',';
+const std::string INPUT_FILE_EXTENSION = ".csv";
+const std::string OUTPUT_PREDICTION_EXTENSION = ".fittedvalues";
+const std::string OUTPUT_WEIGHTS_EXTENSION = ".weights";
 
 
 
@@ -21,22 +24,40 @@ char DELIM = ',';
 // Parse command line arguments
 
 struct command_line_args {
-    command_line_args() : lambda(DEFAULT_LAMBDA_VALUE) {}
+    command_line_args() : lambda(DEFAULT_LAMBDA_VALUE), prec(DEFAULT_PREC) {}
 
     double lambda;
+    std::streamsize prec;
     std::string input_filename;
 
 };
 
 void print_help_message() {
-    std::cout << "help!" << std::endl;
+    std::cout << "==========================================================\n";
+    std::cout << ">>>>>>>>>>>>>>>>>L2 Regularised Regression<<<<<<<<<<<<<<<<\n";
+    std::cout << "==========================================================\n";
+    std::cout << "Usage: linregress <path/to/input_file> [--lambda] [--prec]\n";
+    std::cout << "----------------------------------------------------------\n";
+    std::cout << "Parameters:\n";
+    std::cout << "input_file: File containing training data, must be csv.\n"
+                 "            Row stacked training examples.\n"
+                 "            Final column the y values, others form X.\n";
+    std::cout << "--lambda (numeric): Ridge regularisation parameter.\n"
+                 "                    Must be >=0, 0 gives OLS regression.\n"
+                 "                    Default is " << DEFAULT_LAMBDA_VALUE << "\n";
+    std::cout << "--prec (int): Significant figures for console output.\n"
+                 "              Default is " << DEFAULT_PREC << "\n";
+    std::cout << "==========================================================\n";
     return;
 }
+
+
 
 command_line_args parse_args(int argc, char *argv[]) {
     const char *const short_opts = "l:h";
     const option long_opts[] = {
             {"lambda", required_argument, nullptr, 'l'},
+            {"prec",   required_argument,       nullptr, 'p'},
             {"help",   no_argument,       nullptr, 'h'},
     };
 
@@ -48,7 +69,9 @@ command_line_args parse_args(int argc, char *argv[]) {
             case 'l':
                 output.lambda = std::stod(optarg);
                 break;
-
+            case 'p':
+                output.prec = (std::streamsize) std::stoi(optarg);
+                break;
             case 'h':
             case '?':
             default:
@@ -57,8 +80,7 @@ command_line_args parse_args(int argc, char *argv[]) {
         }
     }
 
-    // sort out the below!!!
-    if (optind < argc) { // IS THIS THE BEST WAY?
+    if (optind < argc) {
         output.input_filename = argv[optind++];
     } else {
         std::cerr << "Failure: must give an input file." << std::endl;
@@ -71,6 +93,21 @@ command_line_args parse_args(int argc, char *argv[]) {
 
     return output;
 }
+
+void check_args(command_line_args &args) {
+
+    if (args.lambda < 0) {
+        std::cerr << "Error: Ridge regularisation parameter lambda must be >= 0" << std::endl;
+        exit(EXIT_FAILURE);
+    }
+
+    if (args.prec < 0) {
+        std::cerr << "Warning: given output precision < 0." << std::endl;
+    }
+
+    return;
+}
+
 // ----------------
 
 
@@ -93,7 +130,7 @@ data_size get_data_size(std::string input_filename, char delim) {
     std::ifstream infile(input_filename);
 
     if (!infile.is_open()) {
-        std::cerr << "Failed to open " << input_filename << std::endl;
+        std::cerr << "Error: Failed to open " << input_filename << std::endl;
         exit(EXIT_FAILURE);
     }
 
@@ -123,7 +160,7 @@ input_data read_input_file(std::string input_filename, data_size input_sizes, ch
     std::ifstream infile(input_filename);
 
     if (!infile.is_open()) {
-        std::cerr << "Failed to open " << input_filename << std::endl;
+        std::cerr << "Error: Failed to open " << input_filename << std::endl;
         exit(EXIT_FAILURE);
     }
 
@@ -193,6 +230,8 @@ public:
     VectorXd predict(MatrixXd x_vals);
 
     inline VectorXd get_weights() { return this->weights; }
+
+    inline bool has_const() { return this->has_constant; }
 };
 
 
@@ -205,13 +244,8 @@ void RidgeRegression::fit(MatrixXd X, VectorXd y, bool add_constant) {
 
     Eigen::MatrixXd eye = Eigen::MatrixXd::Identity(X_train.cols(), X_train.cols());
 
-
     this->qr_decomp = (this->lambda * eye + X_train.transpose() * X_train).householderQr();
-
-
-    MatrixXd w = this->qr_decomp.solve(X_train.transpose() * y);
-    this->weights = Eigen::Map<VectorXd>(w.data(), w.size());
-
+    this->weights = this->qr_decomp.solve(X_train.transpose() * y);
     this->has_constant = add_constant;
     this->is_fitted = true;
     return;
@@ -234,14 +268,21 @@ VectorXd RidgeRegression::predict(MatrixXd xvals) {
 
 
 
-void print_results(VectorXd weights, std::streamsize prec) {
-    std::streamsize curr_prec = std::cout.precision();
-    std::cout << std::internal;
-    std::cout << "Fitted Model\n";
-    std::cout << std::left;
-    std::cout << "y = ";
-    std::cout << std::setprecision(prec);
+// ----------------
+// Output
 
+double rmse(VectorXd y1, VectorXd y2) {
+    return std::sqrt((y1 - y2).array().pow(2).mean());
+}
+
+
+void print_results(RidgeRegression regressor, double rmse_, std::streamsize prec) {
+
+    VectorXd weights = regressor.get_weights();
+
+    std::streamsize curr_prec = std::cout.precision();
+    std::cout << "Fitted Model: y = ";
+    std::cout << std::setprecision(prec);
     int i = 0;
     while (i < weights.size() - 1) {
         std::cout << weights(i) << " x" << i + 1 << " + ";
@@ -249,83 +290,77 @@ void print_results(VectorXd weights, std::streamsize prec) {
     }
 
     std::cout << weights(i) << std::endl;
-
+    std::cout << "RMSE: " << rmse_ << std::endl;
     std::cout << std::setprecision(curr_prec);
     return;
 }
+
+std::string get_output_filename(std::string input_filename, std::string old_ext, std::string new_ext) {
+    std::string prefix;
+    int d = input_filename.size() - old_ext.size();
+    if (d > 0 && input_filename.compare(d, old_ext.size(), old_ext) == 0) {
+        prefix = input_filename.substr(0, d);
+    } else {
+        prefix = input_filename;
+    }
+    return prefix + new_ext;
+}
+
+void save_vector(VectorXd fitted_values, std::string filename) {
+    std::ofstream outfile(filename);
+
+    if (!outfile.is_open()) {
+        std::cerr << "Failed out open output file " << filename << " values not written." << std::endl;
+        return;
+    }
+
+    for (std::size_t i = 0; i < fitted_values.rows(); i++) {
+        outfile << fitted_values(i) << std::endl;
+    }
+
+    outfile.close();
+    return;
+}
+
+// ----------------
+
 
 
 int main(int argc, char *argv[]) {
 
     command_line_args args = parse_args(argc, argv);
+
+    check_args(args);
+
     data_size dims = get_data_size(args.input_filename, DELIM);
     input_data data = read_input_file(args.input_filename, dims, DELIM);
 
+    std::cout << "=================================================" << std::endl;
+    std::cout << "Least Squares Regression. L2 regularisation = " << args.lambda << std::endl;
+    std::cout << "-------------------------------------------------" << std::endl;
+    std::cout << "Read data from " << args.input_filename << ", found " << dims.n_features << " features and ";
+    std::cout << dims.n_examples << " examples" << std::endl;
+    std::cout << "-------------------------------------------------" << std::endl;
+
     RidgeRegression regressor(args.lambda);
+    // Previously considered giving user option to not include constant
+    // in regression but I changed my mind.
     regressor.fit(data.X, data.y, true);
 
-    VectorXd b = regressor.get_weights();
+    VectorXd fitted_values = regressor.predict(data.X);
 
-    VectorXd u = VectorXd::LinSpaced(dims.n_examples, 0, 4);
-    MatrixXd xvals = u.replicate(1, 2);
+    print_results(regressor, rmse(data.y, fitted_values), args.prec);
+    save_vector(
+            fitted_values,
+            get_output_filename(args.input_filename, INPUT_FILE_EXTENSION, OUTPUT_PREDICTION_EXTENSION)
+            );
 
-    VectorXd predictions = regressor.predict(xvals);
-
-    std::streamsize prec = 2;
-    print_results(b, prec);
+    save_vector(
+            regressor.get_weights(),
+            get_output_filename(args.input_filename, INPUT_FILE_EXTENSION, OUTPUT_WEIGHTS_EXTENSION)
+    );
+    std::cout << "=================================================" << std::endl;
 
     return 0;
 
 }
-
-
-/*
- * APPARENTLY THE USE OF QR IS MORE COMMON FOR LEAST SQUARES PROBLEMS !!!!!!!!! BALLS
-
- *  Maybe it is easier to assume full rank of the X matrix?
- *  need ot do something witht the predictions
- *  also need to take the output prec from the command line args.
- *
- *
- * TODO:
- * - need to take the adding a constant from the command line args
- * - reading input fule
- * - write usage/help message
- * - use QR rather than cholesky?
- * - print table, give output, make predictions, etc.
- * - ability to do OLS regression too!
- * - may need some CMAKE type stuff. probs worth reading the embedded systems labs stuff
- *
- * The program can print a table that has
- * < regression results>
- * < model: y ~ a1 x1 ... etc.>
- * t-stats (for each coeff)
- * RMSE
- * log likelihood
- * t-stat calc from (https://bmcbioinformatics.biomedcentral.com/articles/10.1186/1471-2105-12-372)
- *
- *
- *
- * Now in the process of making the predictions. Might be worth doing that and getting a couple
- * of other statistics on the fit (i.e. RMSE or something) and then put it into a class. Maybe
- * that would be enough? (just get a couple of sample stats like beta, R^2, T-stat, etc.
- * could print the model like y = a1x1 + ... + b
- *
- *
- * When you do the class maybe you can figure out the number of dims in advance and save some
- * compile time?
- *
- * Notes:
- * - figure out this thing about column major ordering in Eigen
- * (is it normal and is it just indexing?)
- * - get the QR decomp for when lambda is non-zero. maybe want householder QR,
- *   maybe also need to make sure the rank is checked?
- *
- *   need to implement the ols stuff as well
- *   Possibly worth just couching this as bayes lin regress
- *   potentially some ordering issues with eigen? also need to make sure we stack
- *   examples correctly
- *
- *   decide which stats to show, how to write output etc.
- *   can pick a few from the python version
- */
