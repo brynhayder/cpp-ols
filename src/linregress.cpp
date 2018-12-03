@@ -2,83 +2,264 @@
 // Created by Bryn Elesedy on 12/11/2018.
 // Linear regression with a single output dimension
 
-
+#include <getopt.h>
+#include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <numeric>
 #include <vector>
 
 #include <Eigen/Dense>
 
-
 using Eigen::MatrixXd;
 using Eigen::VectorXd;
 
+double DEFAULT_LAMBDA_VALUE = 1.;
 
-VectorXd ridge_weights(MatrixXd X, VectorXd y, double lambda);
-VectorXd predict(VectorXd weights, MatrixXd xvals);
 
-int main() {
+MatrixXd append_ones_column(MatrixXd X) {
+    MatrixXd new_x(X.rows(), X.cols() + 1);
+    VectorXd c = VectorXd::Constant(X.rows(), 1.);
+    new_x << X, c;
+    return new_x;
+}
+
+
+class RidgeRegression {
+private:
+    double lambda;
+    bool has_constant;
+    bool is_fitted;
+
+    Eigen::HouseholderQR <MatrixXd> qr_decomp;
+    VectorXd weights;
+
+public:
+    RidgeRegression(double lambda) : lambda(lambda), is_fitted(false) {}
+
+    void fit(MatrixXd X, VectorXd y, bool add_constant);
+
+    VectorXd predict(MatrixXd x_vals);
+
+    inline VectorXd get_weights() { return this->weights; }
+};
+
+
+void RidgeRegression::fit(MatrixXd X, VectorXd y, bool add_constant) {
+    if (X.rows() != y.rows()) {
+        throw std::invalid_argument("X and y must have same number of rows.");
+    }
+
+    MatrixXd X_train = (add_constant) ? append_ones_column(X) : X;
+
+    Eigen::MatrixXd eye = Eigen::MatrixXd::Identity(X_train.cols(), X_train.cols());
+
+
+    this->qr_decomp = (this->lambda * eye + X_train.transpose() * X_train).householderQr();
+
+
+    MatrixXd w = this->qr_decomp.solve(X_train.transpose() * y);
+    this->weights = Eigen::Map<VectorXd>(w.data(), w.size());
+
+    this->has_constant = add_constant;
+    this->is_fitted = true;
+    return;
+}
+
+VectorXd RidgeRegression::predict(MatrixXd xvals) {
+    if (!this->is_fitted) {
+        throw std::domain_error("Need to fit regression before prediction.");
+    }
+
+    if (has_constant) {
+        double offset = this->weights(this->weights.rows() - 1);
+        VectorXd slope = this->weights.head(this->weights.rows() - 1);
+        return ((xvals * slope).array() + offset).matrix();
+    } else {
+        return xvals * this->weights;
+    }
+}
+
+
+void print_results(VectorXd weights, std::streamsize prec) {
+
+    const char sep = ' ';
+//    const int width = 5;
+
+    std::streamsize curr_prec = std::cout.precision();
+    std::cout << std::internal;
+    std::cout << "Fitted Model\n";
+    std::cout << std::left;
+    std::cout << "y = ";
+    std::cout << std::setprecision(prec);
+
+    int i = 0;
+    while (i < weights.size() - 1) {
+        std::cout << weights(i) << " x" << i + 1 << " + ";
+        i++;
+    }
+
+    std::cout << weights(i) << std::endl;
+
+    std::cout << std::setprecision(curr_prec);
+    return;
+}
+
+
+void print_help_message() {
+    std::cout << "help!" << std::endl;
+    return;
+}
+
+
+struct command_line_args {
+    command_line_args(): lambda(DEFAULT_LAMBDA_VALUE) {}
+    double lambda;
+    std::string input_filename;
+
+};
+
+
+command_line_args parse_args(int argc, char *argv[]) {
+    const char *const short_opts = "l:h";
+    const option long_opts[] = {
+            {"lambda", required_argument, nullptr, 'l'},
+            {"help",   no_argument, nullptr, 'h'},
+    };
+
+
+    command_line_args output;
+    int opt;
+    int option_index = 0;
+    while ((opt = getopt_long(argc, argv, short_opts, long_opts, &option_index)) != -1) {
+        switch (opt) {
+            case 'l':
+                output.lambda = std::stod(optarg);
+                break;
+
+            case 'h':
+            case '?':
+            default:
+                print_help_message();
+                exit(EXIT_SUCCESS);
+        }
+    }
+
+    // sort out the below!!!
+    if (optind < argc) { // IS THIS THE BEST WAY?
+        output.input_filename = argv[optind++];
+    } else {
+        std::cerr << "Failure: must give an input file." << std::endl;
+        exit(EXIT_FAILURE);
+    }
+
+    if (optind < argc){
+        std::cerr << "Warning: "<< argc - optind << " additional arguments given, all ignored!\n" << std::endl;
+    }
+
+    return output;
+}
+
+
+struct input_data {
+    MatrixXd X;
+    VectorXd y;
+};
+
+
+input_data read_input_file(std::string input_filename){
+    input_data inputs;
+
+    std::ifstream infile(input_filename);
+
+    if (!infile.is_open()) {
+        std::cerr << "Failed to open " << input_filename << std::endl;
+        exit(EXIT_FAILURE);
+    }
+
+    while (std::getline(infile, line)) {
+        std::cout << line << std::endl;
+    }
+
+    // read file
+
+    return inputs;
+}
+
+
+int main(int argc, char *argv[]) {
+
+    command_line_args args = parse_args(argc, argv);
+
 
     int n_examples = 5;
-    int n_features = 1;
-    double s = 2;
     double err_size = 0.1;
 
-    VectorXd v = VectorXd::Constant(n_examples, 1);
     VectorXd u = VectorXd::LinSpaced(n_examples, 0, 4);
+    VectorXd u2 = VectorXd::LinSpaced(n_examples, 4, 0);
 
+    MatrixXd X(n_examples, 2 * u.cols());
+    X << u, u2;
 
-    MatrixXd X(v.rows(), v.cols() + 2 * u.cols());
-    X << v,
-         -u,
-         u;
-
+    std::srand(0);
     VectorXd eps = err_size * VectorXd::Random(n_examples);
-    VectorXd y = u + eps;
+    VectorXd y = 2 * u + 3 * u2 + eps;
 
-    std::cout << "X = " << X << std::endl;
-    std::cout << "Y = " << y << std::endl;
+    std::cout << "X = \n" << X << std::endl;
+    std::cout << "Y = \n" << y << std::endl;
 
-    double l = 1.0;
-    VectorXd b = ridge_weights(X, y, l);
-    std::cout << "beta = " << b << std::endl;
+    RidgeRegression regressor(args.lambda);
+    regressor.fit(X, y, true);
 
-    VectorXd predictions = predict(b, u);
+    VectorXd b = regressor.get_weights();
 
-    std::cout << "predictions = " << predictions << std::endl;
+    MatrixXd xvals = u.replicate(1, 2);
+
+//    std::cout << "beta = \n" << b << std::endl;
+
+    VectorXd predictions = regressor.predict(xvals);
+//    std::cout << "predictions = \n" << predictions << std::endl;
+
+    std::streamsize prec = 2;
+    print_results(b, prec);
+
     return 0;
-}
-
-// need to add a constant to X (!!!)
-// These are column stacked training examples
-
-// would be good if we could enforce the size of these two things to be the same
-VectorXd ridge_weights(MatrixXd X, VectorXd y, double lambda){
-    // NEED TO CHANGE THIS TO USE QR (or something) WHEN LAMBDA \NEQ 0
-    if (lambda <= 0){
-        throw domain_error("Ridge parameter lambda must be > 0.");
-    }
-    Eigen::MatrixXd eye = Eigen::MatrixXd::Identity(X.cols(), X.cols());
-    return (lambda * eye + X.transpose() * X).llt().solve(X.transpose() * y);
-}
-
-
-VectorXd ols_weights(MatrixXd X, VectorXd y){
 
 }
+
 
 /*
- * There is some confusion on how the multi output dim stuff works and whether X should
- * be column or row stacked. Need to work this out, but stuff should (surely?) still work for
- * multiple input and output dims and also should be okay as long as consistency in maintained.
+ * APPARENTLY THE USE OF QR IS MORE COMMON FOR LEAST SQUARES PROBLEMS !!!!!!!!! BALLS
+
+ *  Maybe it is easier to assume full rank of the X matrix?
+ *
+ *
+ * TODO:
+ * - reading input fule
+ * - write usage/help message
+ * - use QR rather than cholesky?
+ * - print table, give output, make predictions, etc.
+ * - ability to do OLS regression too!
+ * - may need some CMAKE type stuff. probs worth reading the embedded systems labs stuff
+ *
+ * The program can print a table that has
+ * < regression results>
+ * < model: y ~ a1 x1 ... etc.>
+ * t-stats (for each coeff)
+ * RMSE
+ * log likelihood
+ * t-stat calc from (https://bmcbioinformatics.biomedcentral.com/articles/10.1186/1471-2105-12-372)
+ *
+ *
  *
  * Now in the process of making the predictions. Might be worth doing that and getting a couple
  * of other statistics on the fit (i.e. RMSE or something) and then put it into a class. Maybe
- * that would be enough?
+ * that would be enough? (just get a couple of sample stats like beta, R^2, T-stat, etc.
+ * could print the model like y = a1x1 + ... + b
+ *
  *
  * When you do the class maybe you can figure out the number of dims in advance and save some
  * compile time?
- *
  *
  * Notes:
  * - figure out this thing about column major ordering in Eigen
@@ -86,18 +267,11 @@ VectorXd ols_weights(MatrixXd X, VectorXd y){
  * - get the QR decomp for when lambda is non-zero. maybe want householder QR,
  *   maybe also need to make sure the rank is checked?
  *
- * Goal here is to get something that can do linear regression on data from a text file
- * and can be used from the command line
+ *   need to implement the ols stuff as well
+ *   Possibly worth just couching this as bayes lin regress
+ *   potentially some ordering issues with eigen? also need to make sure we stack
+ *   examples correctly
  *
+ *   decide which stats to show, how to write output etc.
+ *   can pick a few from the python version
  */
-
-
-VectorXd predict(VectorXd weights, MatrixXd xvals) {
-    double offset = weights(0);
-    VectorXd slope = weights.tail(weights.rows() - 1);
-    VectorXd output = ((xvals * slope).array() + offset).matrix();
-
-    std::cout << xvals << slope << output << std::endl;
-
-    return output;
-}
